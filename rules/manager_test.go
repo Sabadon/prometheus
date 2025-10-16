@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,7 +35,6 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/atomic"
 	"go.yaml.in/yaml/v2"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -47,6 +47,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/tsdb/tsdbutil"
+	"github.com/prometheus/prometheus/util/atomicutil"
 	"github.com/prometheus/prometheus/util/teststorage"
 	prom_testutil "github.com/prometheus/prometheus/util/testutil"
 )
@@ -1410,6 +1411,13 @@ func TestRuleGroupEvalIterationFunc(t *testing.T) {
 		m := map[uint64]*Alert{}
 		m[1] = activeAlert
 
+		var (
+			restored           atomic.Bool
+			evaluationDuration atomic.Int64
+		)
+		restored.Store(true)
+		evaluationDuration.Store(0)
+
 		rule := &AlertingRule{
 			name:                "HTTPRequestRateLow",
 			vector:              expr,
@@ -1420,11 +1428,11 @@ func TestRuleGroupEvalIterationFunc(t *testing.T) {
 			externalURL:         "",
 			active:              m,
 			logger:              nil,
-			restored:            atomic.NewBool(true),
-			health:              atomic.NewString(string(HealthUnknown)),
-			evaluationTimestamp: atomic.NewTime(time.Time{}),
-			evaluationDuration:  atomic.NewDuration(0),
-			lastError:           atomic.NewError(nil),
+			restored:            &restored,
+			health:              atomicutil.NewGenericValue(string(HealthUnknown)),
+			evaluationTimestamp: atomicutil.NewGenericValue(time.Time{}),
+			evaluationDuration:  &evaluationDuration,
+			lastError:           atomicutil.NewGenericValue[error](nil),
 		}
 
 		group := NewGroup(GroupOptions{
@@ -2353,7 +2361,7 @@ func TestNewRuleGroupRestoration(t *testing.T) {
 	var evalCount atomic.Int32
 	ch := make(chan int32)
 	noopEvalIterFunc := func(context.Context, *Group, time.Time) {
-		evalCount.Inc()
+		evalCount.Add(1)
 		ch <- evalCount.Load()
 	}
 
@@ -2418,7 +2426,7 @@ func TestNewRuleGroupRestorationWithRestoreNewGroupOption(t *testing.T) {
 	var evalCount atomic.Int32
 	ch := make(chan int32)
 	noopEvalIterFunc := func(context.Context, *Group, time.Time) {
-		evalCount.Inc()
+		evalCount.Add(1)
 		ch <- evalCount.Load()
 	}
 
